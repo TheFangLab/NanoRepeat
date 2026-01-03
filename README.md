@@ -1,8 +1,5 @@
 # NanoRepeat: quantification of Short Tandem Repeats (STRs) from long-read sequencing data (including ONT and PacBio)
 
-[![PyPI version](https://badge.fury.io/py/NanoRepeat.svg)](https://badge.fury.io/py/NanoRepeat)
-[![DOI](https://www.zenodo.org/badge/DOI/10.5281/zenodo.7024484.svg)](https://www.zenodo.org/record/7024484)
-
 ## Table of Contents
 
 - [Installation](#installation)
@@ -15,30 +12,26 @@
 
 ## Installation
 
-#### Prerequisites:
+Prerequisites: [Python](https://www.python.org/downloads/) (version >= 3.8)
 
-1. [Python](https://www.python.org/downloads/) (version >= 3.8)
-2. [Minimap2](https://github.com/lh3/minimap2) (version >= 2.22)
+**Please note that this is a forked version with a different installation method from the original repository.** 
 
-You may alreadly have `minimap2` if you performed analysis of long-read sequencing data. You can use `which minimap2` to check the full path to the two executable files. Please note that `minimap2` should be v2.22 or later. 
-
-Once you installed the above tools, you can use the following commands to install NanoRepeat (we recommend creating an new conda environment to avoid dependency issues):
+You can use the following commands to install NanoRepeat (we recommend creating an new conda environment to avoid dependency issues):
 
 ```
 conda create -n nanorepeat python=3.8
 conda activate nanorepeat
-git clone https://github.com/WGLab/NanoRepeat.git
+
+# install pyminimap2 first
+git clone https://github.com/TheFangLab/pyminimap2.git
+cd pyminimap2
+pip install .
+
+git clone https://github.com/TheFangLab/NanoRepeat.git
 cd NanoRepeat
 pip install .
 ```
 
-If you want to install a stable version from Python Package Index (PyPI): 
-
-```
-conda create -n nanorepeat python=3.8
-conda activate nanorepeat
-pip install NanoRepeat
-```
 Notice: If you want to install NanoRepeat from a PyPI mirror, please check if the version in the mirror is update to date. 
 
 ## Usage
