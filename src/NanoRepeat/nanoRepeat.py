@@ -133,7 +133,7 @@ def main():
     input_args.type = input_args.type.lower()
     
     if input_args.type not in ['bam', 'cram', 'fastq', 'fasta']:
-        tk.eprint(f'ERROR! unknown input type: {input_args.type} valid values are: bam, fastq, fasta')
+        tk.eprint(f'ERROR! unknown input type: {input_args.type} valid values are: bam, cram, fastq, fasta')
         sys.exit(1)
     
     if input_args.data_type not in ['ont', 'ont_sup', 'ont_q20', 'clr', 'hifi']:
