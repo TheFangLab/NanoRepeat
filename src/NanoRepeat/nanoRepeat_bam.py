@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 '''
-Copyright (c) 2020-2023 Children's Hospital of Philadelphia
+Copyright (c) 2020-2025 Children's Hospital of Philadelphia
 Author: Li Fang (fangli2718@gmail.com)
               
 Permission is hereby granted, free of charge, to any person obtaining
@@ -28,18 +28,15 @@ SOFTWARE.
 
 
 import os
-os.environ["MKL_NUM_THREADS"] = "1"
-os.environ["NUMEXPR_NUM_THREADS"] = "1"
-os.environ["OMP_NUM_THREADS"] = "1"
-
 
 import string
 import sys
 import shutil
+import time
 import numpy as np
 import pysam
+import pyminimap2 as pymm2
 from typing import List
-import subprocess
 import multiprocessing
 import glob
 
@@ -49,6 +46,7 @@ from NanoRepeat.repeat_region import *
 from NanoRepeat.paf import *
 from NanoRepeat.split_alleles import *
 from NanoRepeat.repeat_region import *
+import seq_align
 
 class Metainfo:
     def __init__(self, allele_id = -1, num_reads = 0, predicted_repeat_size = -1, min_repeat_size = -1, max_repeat_size = -1):
@@ -139,7 +137,7 @@ def extract_ref_sequence(ref_fasta_dict, repeat_region:RepeatRegion):
     
     return
 
-def refine_repeat_region_in_ref(minimap2:string, repeat_region:RepeatRegion, num_cpu:int):
+def refine_repeat_region_in_ref(repeat_region:RepeatRegion, num_cpu:int):
 
     mid_ref_seq            = repeat_region.mid_ref_seq
     repeat_unit_seq        = repeat_region.repeat_unit_seq
@@ -164,10 +162,9 @@ def refine_repeat_region_in_ref(minimap2:string, repeat_region:RepeatRegion, num
 
     score_parameters = '-x ava-ont -z30 -k3 -w2 -m1 -n2 -s10'
 
-    cmd = f'{minimap2} {score_parameters} -f 0 --cs -t {num_cpu} {pure_repeat_seq_file} {mid_ref_seq_file}'
-    result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-
-    lines = result.stdout.strip().split('\n')
+    cmd = f'{score_parameters} -f 0 --cs -t {num_cpu} {pure_repeat_seq_file} {mid_ref_seq_file}'
+    mm2_out, mm2_err = pymm2.main(cmd)
+    lines = mm2_out.strip().split('\n')
 
     paf_list = []
     for line in lines:
@@ -339,7 +336,7 @@ def find_anchor_locations_from_paf(repeat_region: RepeatRegion, anchor_locations
 
     return
 
-def find_anchor_locations_in_reads(minimap2:string, data_type:string, repeat_region:RepeatRegion, num_cpu:int):
+def find_anchor_locations_in_reads(data_type:string, repeat_region:RepeatRegion, num_cpu:int):
 
     left_template_seq    = repeat_region.left_anchor_seq
     left_template_name   = 'left_anchor'
@@ -359,9 +356,9 @@ def find_anchor_locations_in_reads(minimap2:string, data_type:string, repeat_reg
 
 
     preset = tk.get_preset_for_minimap2(data_type)
-    cmd = f'{minimap2} -c -t {num_cpu} {preset} {template_fasta_file} {repeat_region.region_fq_file}'
-    result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    anchor_locations_paf_text = result.stdout.strip()
+    cmd = f'-c -t {num_cpu} {preset} {template_fasta_file} {repeat_region.region_fq_file}'
+    mm2_out, mm2_err = pymm2.main(cmd)
+    anchor_locations_paf_text = mm2_out.strip()
 
     find_anchor_locations_from_paf(repeat_region, anchor_locations_paf_text)
     
@@ -413,7 +410,7 @@ def make_core_seq_fastq(repeat_region: RepeatRegion):
     return
 
 
-def round1_and_round2_estimation(minimap2:string, data_type:string, repeat_region: RepeatRegion, num_cpu: int):
+def round1_and_round2_estimation(data_type:string, repeat_region: RepeatRegion, num_cpu: int):
 
     if len(repeat_region.read_dict) == 0: return
 
@@ -440,10 +437,10 @@ def round1_and_round2_estimation(minimap2:string, data_type:string, repeat_regio
     repeat_region.temp_file_list.append(round1_paf_file)
     
     preset = tk.get_preset_for_minimap2(data_type)
-    cmd = f'{minimap2} -c -t {num_cpu} {preset} -f 0.0 {round1_fasta_file} {repeat_region.core_seq_fq_file}'
-    result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    cmd = f'-c -t {num_cpu} {preset} -f 0.0 {round1_fasta_file} {repeat_region.core_seq_fq_file}'
+    mm2_out, mm2_err = pymm2.main(cmd)
     
-    lines = result.stdout.strip().split('\n')
+    lines = mm2_out.strip().split('\n')
     round2_repeat_size_dict = dict()
     
     for line in lines:
@@ -489,53 +486,49 @@ def get_max_read_length_from_fastq(fq_file):
 
 def round3_estimation_for1read(repeat_region: RepeatRegion, read):
 
-    lines = read.round3_paf_text.split('\n')
-    read_paf_list = []
-    for line in lines:
-        if not line: continue
-        if line.strip() == '': continue
-        col_list = line.strip().split('\t')
-        if len(col_list) == 0: continue
-        paf = PAF(col_list)
-        assert paf.qname == read.read_name
-        read_paf_list.append(paf)
+    if not read.round3_align_results: return
+    
+    round3_align_results = sorted(read.round3_align_results, key = lambda x:x.score, reverse = True)
+    max_align_score = round3_align_results[0].score
+    max_score_repeat_size_list = []
+    for i in range(0, len(round3_align_results)):        
+        if round3_align_results[i].score < max_align_score: break        
+        if round3_align_results[i].template_start_pos < repeat_region.left_anchor_len \
+            and round3_align_results[i].template_seq_len - round3_align_results[i].template_end_pos < repeat_region.right_anchor_len:
+            repeat_size = int(round3_align_results[i].template_id)
+            max_score_repeat_size_list.append(repeat_size)
 
-    if len(read_paf_list) == 0: return
-
-    read_paf_list.sort(key = lambda paf:paf.align_score, reverse = True)
-    best_paf_repeat_size_list = []
-    for i in range(0, len(read_paf_list)):
-        if read_paf_list[i].align_score < read_paf_list[0].align_score: break
-        if read_paf_list[i].tstart < repeat_region.left_anchor_len and read_paf_list[i].tlen - read_paf_list[i].tend < repeat_region.right_anchor_len and read_paf_list[i].align_score == read_paf_list[0].align_score:
-            best_paf_repeat_size_list.append(int(read_paf_list[i].tname))
-
-    if len(best_paf_repeat_size_list) > 0:
-        read.round3_repeat_size = np.mean(best_paf_repeat_size_list)
+    if len(max_score_repeat_size_list) > 0:
+        read.round3_repeat_size = np.mean(max_score_repeat_size_list)
     else:
         read.round3_repeat_size = read.round2_repeat_size
     return
-                
+
+
 def round3_estimation_from_alignment(repeat_region: RepeatRegion):
 
     for read_name in repeat_region.read_dict:
         read = repeat_region.read_dict[read_name]
         if repeat_region.read_dict[read_name].round2_repeat_size == None: continue
-        if read.round3_paf_text == "" : continue 
+        if read.round3_align_results == "" : continue 
         round3_estimation_for1read(repeat_region, read)
     
     return 
 
-def round3_estimation(minimap2:string, data_type:string, fast_mode, repeat_region:RepeatRegion, num_cpu:int):
+def round3_estimation(data_type:string, fast_mode, repeat_region:RepeatRegion, num_cpu:int):
     
-    round3_align(num_cpu, fast_mode, repeat_region, data_type, minimap2)
+    round3_align(num_cpu, fast_mode, repeat_region, data_type)
 
     round3_estimation_from_alignment(repeat_region)
 
-def round3_align (num_cpu:int, fast_mode, repeat_region:RepeatRegion, data_type:string, minimap2:string):
-    
+    for read_name in repeat_region.read_dict:
+        repeat_region.read_dict[read_name].round3_align_results = ""
+
+def round3_align (num_cpu:int, fast_mode, repeat_region:RepeatRegion, data_type:string):
+    if num_cpu < 4: num_cpu = 4
+
     read_id = -1
     existing_reference_fasta_set = set()
-
     for read_name in repeat_region.read_dict:
         read = repeat_region.read_dict[read_name]
         round2_repeat_size = read.round2_repeat_size
@@ -563,21 +556,17 @@ def round3_align (num_cpu:int, fast_mode, repeat_region:RepeatRegion, data_type:
                 template_fasta_fp.write('%s\n' % template_seq)
 
             template_fasta_fp.close()
-
             existing_reference_fasta_set.add(template_fasta_file)
 
         read_seq = repeat_region.read_core_seq_dict[read_name].strip()
-        read_fasta_file = os.path.join(repeat_region.temp_out_dir, f'round3_input.read{read_id}.fasta')
         
+        read_fasta_file = os.path.join(repeat_region.temp_out_dir, f'round3_input.read{read_id}.fasta')
         read_fasta_f = open(read_fasta_file, 'w')
         read_fasta_f.write(f'>{read_name}\n')
         read_fasta_f.write(read_seq + '\n')
         read_fasta_f.close()
 
-        preset = tk.get_preset_for_minimap2(data_type)
-        cmd = f'{minimap2} {preset} -f 0.0 -N 100 -c --eqx -t {num_cpu} {template_fasta_file} {read_fasta_file}'
-        result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        read.round3_paf_text = result.stdout
+        read.round3_align_results = seq_align.fasta_sw_align(read_fasta_file, template_fasta_file)
 
     return
 
@@ -668,29 +657,45 @@ def extract_fastq_from_bam(in_bam_file, repeat_region:RepeatRegion, flank_dist, 
     
     with open(out_fastq_file, 'w') as fastq:
         for read in bam.fetch(chrom, start_pos, end_pos):
+            if read.is_secondary or read.is_supplementary:
+                continue
             if read.query_sequence == None: 
                 continue
-            
-            fastq.write(f'@{read.query_name}\n{read.query_sequence}\n+\n')
+            if read.query_sequence.strip() == '':
+                continue
+            uppercase_query_sequence = read.query_sequence.upper()
+            fastq.write(f'@{read.query_name}\n{uppercase_query_sequence}\n+\n')
             if read.query_qualities != None:
                 fastq.write(''.join([chr(q + quality_shift) for q in read.query_qualities]) + '\n')
             else:
-                fastq.write(chr(quality_shift + 13) * len(read.query_sequence) + '\n')
+                fastq.write(chr(quality_shift + 13) * len(uppercase_query_sequence) + '\n')
 
     bam.close()
     return
-    
-def quantify1repeat_from_bam_worker(process_id, num_para_regions, num_threads_per_region, input_args, error_rate, in_bam_file, ref_fasta_dict, repeat_region_list, result_queue):
-    result_list = []
-    for i in range(process_id, len(repeat_region_list), num_para_regions):
-        process_name = f'Process {process_id:02}'
-        repeat_region = repeat_region_list[i]
-        quantified_repeat_region = quantify1repeat_from_bam(process_name, num_threads_per_region, input_args, error_rate, in_bam_file, ref_fasta_dict, repeat_region)
-        result_list.append(quantified_repeat_region)
-    
-    result_queue.put(result_list)
 
-    return
+global_ref_fasta_dict = None
+def init_worker_process(ref_fasta_dict):
+
+    global global_ref_fasta_dict
+    global_ref_fasta_dict = ref_fasta_dict
+
+def process_single_region_wrapper(args):
+
+    process_name_suf, num_threads, input_args, error_rate, in_bam_file, repeat_region = args
+    
+    process_name = f'Worker-{process_name_suf:02d}'
+
+    global global_ref_fasta_dict
+    
+    return quantify1repeat_from_bam(
+        process_name, 
+        num_threads, 
+        input_args, 
+        error_rate, 
+        in_bam_file, 
+        global_ref_fasta_dict, 
+        repeat_region
+    )
 
 def quantify1repeat_from_bam(process_name, num_threads_per_region, input_args, error_rate, in_bam_file, ref_fasta_dict, repeat_region):
     
@@ -699,7 +704,8 @@ def quantify1repeat_from_bam(process_name, num_threads_per_region, input_args, e
     def _clean_and_exit(input_args, repeat_region:RepeatRegion):
 
         if input_args.save_temp_files == False:
-            shutil.rmtree(repeat_region.temp_out_dir)
+            if os.path.exists(repeat_region.temp_out_dir):
+                shutil.rmtree(repeat_region.temp_out_dir)
 
         if repeat_region.no_details == True:
             files_to_delete = glob.glob(f'{repeat_region.out_prefix}*')
@@ -708,7 +714,7 @@ def quantify1repeat_from_bam(process_name, num_threads_per_region, input_args, e
                     if os.path.isfile(file_path):
                         os.remove(file_path)
                 except Exception as e:
-                    print(f"Error in deleting file {file_path}: {e}")
+                    pass 
         
         repeat_region.get_final_output()
         return repeat_region
@@ -717,7 +723,7 @@ def quantify1repeat_from_bam(process_name, num_threads_per_region, input_args, e
         formatted_chr_name = 'chr' + repeat_region.chrom
     else:
         formatted_chr_name = repeat_region.chrom
-     
+
     temp_out_dir = f'{input_args.out_prefix}.NanoRepeat_temp.{repeat_region.to_outfile_prefix()}'
     out_dir = f'{input_args.out_prefix}.details/{formatted_chr_name}'
     os.makedirs(temp_out_dir, exist_ok=True)
@@ -731,7 +737,10 @@ def quantify1repeat_from_bam(process_name, num_threads_per_region, input_args, e
     repeat_region.region_fq_file = os.path.join(temp_out_dir, f'{repeat_region.to_outfile_prefix()}.fastq')
     extract_fastq_from_bam(in_bam_file, repeat_region, repeat_region.anchor_len, repeat_region.region_fq_file)
     
-    fastq_file_size = os.path.getsize(repeat_region.region_fq_file)
+    try:
+        fastq_file_size = os.path.getsize(repeat_region.region_fq_file)
+    except OSError:
+        fastq_file_size = 0
 
     if fastq_file_size == 0:
         tk.eprint(f'WARNING! No reads were found in repeat region: {repeat_region.to_outfile_prefix()}')
@@ -740,43 +749,45 @@ def quantify1repeat_from_bam(process_name, num_threads_per_region, input_args, e
     # extract ref sequence
     extract_ref_sequence(ref_fasta_dict, repeat_region)
 
-    refine_repeat_region_in_ref(input_args.minimap2, repeat_region, num_threads_per_region)
+    refine_repeat_region_in_ref(repeat_region, num_threads_per_region)
     if repeat_region.ref_has_issue == True and input_args.save_temp_files == False:
         return _clean_and_exit(input_args, repeat_region)
     
+    # Step 1: finding anchor location in reads
     tk.eprint(f'NOTICE: [{process_name}] Step 1: finding anchor location in reads')
-    find_anchor_locations_in_reads(input_args.minimap2, input_args.data_type, repeat_region, num_threads_per_region)
+    find_anchor_locations_in_reads(input_args.data_type, repeat_region, num_threads_per_region)
     
     # make core sequence fastq
     make_core_seq_fastq(repeat_region)
 
+    # Step 2: round 1 and round 2 estimation
     tk.eprint(f'NOTICE: [{process_name}] Step 2: round 1 and round 2 estimation')
-    round1_and_round2_estimation(input_args.minimap2, input_args.data_type, repeat_region, num_threads_per_region)
+    round1_and_round2_estimation(input_args.data_type, repeat_region, num_threads_per_region)
 
+    # Step 3: round 3 estimation
     tk.eprint(f'NOTICE: [{process_name}] Step 3: round 3 estimation')
-    round3_estimation(input_args.minimap2, input_args.data_type, input_args.fast_mode, repeat_region, num_threads_per_region)
+    round3_estimation(input_args.data_type, input_args.fast_mode, repeat_region, num_threads_per_region)
 
     output_repeat_size_1d(repeat_region)
 
+    # Step 4: phasing reads using GMM
     tk.eprint(f'NOTICE: [{process_name}] Step 4: phasing reads using GMM')
     split_allele_using_gmm_1d(repeat_region, input_args.ploidy, error_rate, input_args.max_mutual_overlap, input_args.max_num_components, input_args.remove_noisy_reads)
     
     return _clean_and_exit(input_args, repeat_region)
 
 
-        
 def nanoRepeat_bam (input_args, in_bam_file:string):
 
-    # ont, ont_sup, ont_q20, clr, hifi
-
-    if input_args.data_type == 'ont' or 'clr':
+    # Set error rate based on data type
+    if input_args.data_type == 'ont' or input_args.data_type == 'clr':
         error_rate = 0.07
     elif input_args.data_type == 'ont_sup':
-        error_rate = 0.04
+        error_rate = 0.06
     elif input_args.data_type == 'ont_q20':
-        error_rate = 0.03
+        error_rate = 0.06
     elif input_args.data_type == 'hifi':
-        error_rate = 0.02
+        error_rate = 0.05
     else:
         tk.eprint(f'ERROR! unknown data type: {input_args.data_type}')
         sys.exit(1)
@@ -787,43 +798,77 @@ def nanoRepeat_bam (input_args, in_bam_file:string):
     tk.eprint(f'NOTICE: Reading reference fasta file: {input_args.ref_fasta}')
     ref_fasta_dict = tk.fasta_file2dict(input_args.ref_fasta)
     
-    max_num_para_regions = 16
-    num_para_regions = min(max_num_para_regions, len(repeat_region_list), input_args.num_cpu)
-    num_threads_per_region = int(input_args.num_cpu / num_para_regions)
+    total_cpu = input_args.num_cpu
+    total_tasks = len(repeat_region_list)
+    
+    if total_tasks >= total_cpu:
+        num_para_regions = min(32, total_cpu)
+    else:
+        num_para_regions = max(1, total_tasks)
+    
+    num_threads_per_region = int(total_cpu / num_para_regions)
+    if num_threads_per_region < 1: num_threads_per_region = 1
+    
+    tk.eprint(f'NOTICE: Parallel Strategy -> {num_para_regions} concurrent workers, {num_threads_per_region} threads per worker.')
     
     for i in range(0, len(repeat_region_list)):
         repeat_region_list[i].index = i
 
-    processes = []
-    result_queue = multiprocessing.Queue()
-    for process_id in range(num_para_regions):
-        p = multiprocessing.Process(target=quantify1repeat_from_bam_worker, args=(process_id, num_para_regions, num_threads_per_region, input_args, error_rate, in_bam_file, ref_fasta_dict, repeat_region_list, result_queue))
-        processes.append(p)
-        p.start()
+    task_list = []
+    for i, region in enumerate(repeat_region_list):
+        task_args = (
+            i % num_para_regions, 
+            num_threads_per_region,
+            input_args,
+            error_rate,
+            in_bam_file,
+            region
+        )
+        task_list.append(task_args)
 
     quantified_repeat_region = []
-    for p in processes:
-        quantified_repeat_region.extend(result_queue.get())
 
-    for p in processes:
-        p.join()
+    try:
+        with multiprocessing.Pool(
+            processes=num_para_regions,
+            initializer=init_worker_process,
+            initargs=(ref_fasta_dict,)
+        ) as pool:
+            
+            for result in pool.imap_unordered(process_single_region_wrapper, task_list):
+                quantified_repeat_region.append(result)
+                
+    except KeyboardInterrupt:
+        tk.eprint("NOTICE: Interrupted by user, terminating pool...")
+        sys.exit(1)
+    except Exception as e:
+        tk.eprint(f"ERROR: An exception occurred during parallel processing: {e}")
+        sys.exit(1)
+
 
     quantified_repeat_region.sort(key = lambda repeat_region:repeat_region.index)
 
     out_tsv_file = f'{input_args.out_prefix}.NanoRepeat_output.tsv'
-    out_tsv_f = open(out_tsv_file, 'w')
+    tk.eprint(f'NOTICE: Writing results to {out_tsv_file}')
+    try:
+        out_tsv_f = open(out_tsv_file, 'w')
+        for i in range(0, len(quantified_repeat_region)):
 
-    for i in range(0, len(quantified_repeat_region)):
-        quantified_repeat_region[i].get_final_output()
-        out_tsv_f.write(quantified_repeat_region[i].final_output)
-    out_tsv_f.close()
+            if not hasattr(quantified_repeat_region[i], 'final_output'):
+                 quantified_repeat_region[i].get_final_output()
+            out_tsv_f.write(quantified_repeat_region[i].final_output)
+        out_tsv_f.close()
+    except Exception as e:
+        tk.eprint(f"ERROR: Failed to write output file: {e}")
 
     if input_args.no_details == True:
-        shutil.rmtree(f'{input_args.out_prefix}.details')
-        
+        details_dir = f'{input_args.out_prefix}.details'
+        if os.path.exists(details_dir):
+            try:
+                shutil.rmtree(details_dir)
+            except Exception as e:
+                tk.eprint(f"WARNING: Could not remove details directory: {e}")
+
     tk.eprint('NOTICE: Program finished.')
 
     return
-
-
-

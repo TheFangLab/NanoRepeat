@@ -39,6 +39,7 @@ from typing import final
 import numpy as np
 import argparse
 import shutil
+import pyminimap2 as pymm2
 
 from NanoRepeat import tk
 from NanoRepeat.paf import *
@@ -109,7 +110,7 @@ def parse_user_arguments():
     ### optional arguments ### ploidy
     parser.add_argument('-d', '--data_type', required = False, metavar = 'data_type',  type = str, default = 'ont', help = '(required) sequencing data type. Should be one of the following: ont, ont_sup, ont_q20, clr, hifi')
     parser.add_argument('-c', '--num_threads',  required = False, metavar = 'INT',    type = int, default = 1,  help = 'number of threads used by minimap2 (default: 1)')
-    parser.add_argument('--minimap2',     required = False, metavar = 'PATH',   type = str, default = '', help = 'path to minimap2 (default: using environment default)')
+    parser.add_argument('--minimap2', required = False, metavar = '(deprecated)',  type = str, default = '', help ='(deprecated) this argument is not needed and will be ignored')
     parser.add_argument('--ploidy',       required = False, metavar = 'INT',    type = int, default = 2,  help = 'ploidy of the sample (default: 2)')
     parser.add_argument('--error_rate',   required = False, metavar = 'FLOAT',  type = float, default = 0.1,  help = 'sequencing error rate (default: 0.1)')
     parser.add_argument('--max_mutual_overlap', required = False, metavar = 'FLOAT',  type = float, default = 0.1,  help = 'max mutual overlap of two alleles in terms of repeat size distribution (default value: 0.1). If the Gaussian distribution of two alleles have more overlap than this value, the two alleles will be merged into one allele.')
@@ -560,32 +561,24 @@ def initial_estimate_repeat_size(minimap2, repeat_chrom_seq, in_fastq_file, data
     round1_right_anchor_paf_file = os.path.join(out_dir, 'round1.right.paf')
     preset = tk.get_preset_for_minimap2(data_type)
 
-    cmd = f'{minimap2} {preset} -c --eqx -t {num_threads} {left_template_fasta_file} {in_fastq_file} > {round1_left_anchor_paf_file} 2> /dev/null'
-    tk.run_system_cmd(cmd)
+    cmd = f'{preset} -c --eqx -t {num_threads} {left_template_fasta_file}  {in_fastq_file}'
+    round1_left_anchor_paf_string, mm2_err = pymm2.main(cmd)
     
-    cmd = f'{minimap2} {preset} -c --eqx -t {num_threads} {right_template_fasta_file} {in_fastq_file} > {round1_right_anchor_paf_file} 2> /dev/null'
-    tk.run_system_cmd(cmd)
+    cmd = f'{preset} -c --eqx -t {num_threads} {right_template_fasta_file} {in_fastq_file}'
+    round1_right_anchor_paf_string, mm2_err = pymm2.main(cmd)
 
-    cmd = f'cat {round1_left_anchor_paf_file} {round1_right_anchor_paf_file} | sort -k1 - > {round1_paf_file}'
-    tk.run_system_cmd(cmd)
-
-    tk.rm(round1_left_anchor_paf_file)
-    tk.rm(round1_right_anchor_paf_file)
-    initial_estimation = round1_estimation_from_paf(round1_paf_file, repeat1, repeat2, left_anchor_len, right_anchor_len)
+    round1_paf_string = round1_left_anchor_paf_string + round1_right_anchor_paf_string
+    initial_estimation = round1_estimation_from_paf(round1_paf_string, repeat1, repeat2, left_anchor_len, right_anchor_len)
 
     return initial_estimation
 
-def round1_estimation_from_paf(round1_paf_file, repeat1, repeat2, left_anchor_len, right_anchor_len):
+def round1_estimation_from_paf(round1_paf_string, repeat1, repeat2, left_anchor_len, right_anchor_len):
 
     initial_estimation = Round1Estimation()
-    round1_paf_f = open(round1_paf_file, 'r')
+    
     read_paf_list = list()
-    while 1:
-        line = round1_paf_f.readline()
-        if not line: break
-        line = line.strip()
-        if not line: continue
-
+    lines = round1_paf_string.strip().split('\n')
+    for line in lines:
         col_list = line.strip().split('\t')
         paf = PAF(col_list)
 
@@ -595,8 +588,6 @@ def round1_estimation_from_paf(round1_paf_file, repeat1, repeat2, left_anchor_le
             round1_estimation_for1read(read_paf_list, repeat1, repeat2, left_anchor_len, right_anchor_len, initial_estimation)
             read_paf_list.clear()
             read_paf_list.append(paf)
-
-    round1_paf_f.close()
     
     round1_estimation_for1read(read_paf_list, repeat1, repeat2, left_anchor_len, right_anchor_len, initial_estimation)
 

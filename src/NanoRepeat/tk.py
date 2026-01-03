@@ -128,7 +128,6 @@ def count_fastq (in_fastq_file):
     return n_reads
 
 def fasta_file2dict(fasta_file):
-
     fasta_fp = gzopen(fasta_file)
     fasta_dict = dict()
 
@@ -148,7 +147,7 @@ def fasta_file2dict(fasta_file):
             curr_seq = ''
             continue
 
-        curr_seq += line
+        curr_seq += line.upper()
      
     fasta_fp.close()
 

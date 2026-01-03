@@ -52,7 +52,7 @@ class Read:
         self.round1_repeat_size = None
         self.round2_repeat_size = None
         self.round3_repeat_size = None
-        self.round3_paf_text = ""
+        self.round3_align_results = ""
         
 
 class QuantifiedAllele:
