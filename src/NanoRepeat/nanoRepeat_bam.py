@@ -28,18 +28,15 @@ SOFTWARE.
 
 
 import os
-
 import string
 import sys
 import shutil
-import time
 import numpy as np
 import pysam
 import pyminimap2 as pymm2
 from typing import List
 import multiprocessing
 import glob
-
 
 from NanoRepeat import tk
 from NanoRepeat.repeat_region import *
@@ -73,7 +70,6 @@ class Metainfo:
 
     def output(self):
         return 'allele_id=%d\tnum_reads=%d\tpredicted_repeat_size=%d\tmin_repeat_size=%d\tmax_repeat_size=%d' % (self.allele_id, self.num_reads, self.predicted_repeat_size, self.min_repeat_size, self.max_repeat_size)
-
 
 def extract_ref_sequence(ref_fasta_dict, repeat_region:RepeatRegion):
 
@@ -153,7 +149,6 @@ def refine_repeat_region_in_ref(repeat_region:RepeatRegion, num_cpu:int):
     num_units = int(float(mid_ref_seq_len) / len(repeat_unit_seq))+1
     pure_repeat_seq = repeat_unit_seq * num_units
 
-    ref_check_paf_file   = os.path.join(temp_out_dir, 'ref_aligned_to_pure_repeats.paf')
     mid_ref_seq_file     = os.path.join(temp_out_dir, 'mid_ref_seq.fasta')
     pure_repeat_seq_file = os.path.join(temp_out_dir, 'pure_repeat_seq.fasta')
 
@@ -161,7 +156,6 @@ def refine_repeat_region_in_ref(repeat_region:RepeatRegion, num_cpu:int):
     write_seq_to_fasta('pure_repeat_seq', pure_repeat_seq, pure_repeat_seq_file)
 
     score_parameters = '-x ava-ont -z30 -k3 -w2 -m1 -n2 -s10'
-
     cmd = f'{score_parameters} -f 0 --cs -t {num_cpu} {pure_repeat_seq_file} {mid_ref_seq_file}'
     mm2_out, mm2_err = pymm2.main(cmd)
     lines = mm2_out.strip().split('\n')
@@ -243,15 +237,9 @@ def write_seq_to_fasta(seq_name, seq, out_file):
 
 def check_anchor_mapping(one_read_anchor_paf_list: List[PAF]):
 
-    if len(one_read_anchor_paf_list) == 0:
-        return False
-    
-    if len(one_read_anchor_paf_list) == 1:
-        return True
-    
-    if one_read_anchor_paf_list[0].align_len < 10: 
-        return False
-    
+    if len(one_read_anchor_paf_list) == 0: return False    
+    if len(one_read_anchor_paf_list) == 1: return True    
+    if one_read_anchor_paf_list[0].align_len < 10: return False    
     if one_read_anchor_paf_list[0].align_score > 1.5 * one_read_anchor_paf_list[1].align_score and one_read_anchor_paf_list[0].mapq > 30:
         return True
     else:
@@ -260,7 +248,6 @@ def check_anchor_mapping(one_read_anchor_paf_list: List[PAF]):
 def find_anchor_locations_for1read(read_paf_list: List[PAF], repeat_region: RepeatRegion):
 
     if len(read_paf_list) == 0: return
-
     left_anchor_paf_list  = []
     right_anchor_paf_list = []
     for paf in read_paf_list:
@@ -409,7 +396,6 @@ def make_core_seq_fastq(repeat_region: RepeatRegion):
     mid_seq_fq_f.close()
     return
 
-
 def round1_and_round2_estimation(data_type:string, repeat_region: RepeatRegion, num_cpu: int):
 
     if len(repeat_region.read_dict) == 0: return
@@ -517,16 +503,12 @@ def round3_estimation_from_alignment(repeat_region: RepeatRegion):
 
 def round3_estimation(data_type:string, fast_mode, repeat_region:RepeatRegion, num_cpu:int):
     
-    round3_align(num_cpu, fast_mode, repeat_region, data_type)
-
+    round3_align(fast_mode, repeat_region, data_type)
     round3_estimation_from_alignment(repeat_region)
-
     for read_name in repeat_region.read_dict:
         repeat_region.read_dict[read_name].round3_align_results = ""
 
-def round3_align (num_cpu:int, fast_mode, repeat_region:RepeatRegion, data_type:string):
-    if num_cpu < 4: num_cpu = 4
-
+def round3_align (fast_mode, repeat_region:RepeatRegion, data_type:string):
     read_id = -1
     existing_reference_fasta_set = set()
     for read_name in repeat_region.read_dict:
@@ -535,11 +517,9 @@ def round3_align (num_cpu:int, fast_mode, repeat_region:RepeatRegion, data_type:
         if round2_repeat_size == None: continue
         read_id += 1
         
-        buffer = max(15, int(round2_repeat_size * 0.05))
-        if buffer > 150: buffer = 150
-        
-        if fast_mode:
-            buffer = 15
+        buffer = max(10, int(round2_repeat_size * 0.05))
+        if buffer > 20: buffer = 20
+        if fast_mode: buffer = 5
         
         max_template_repeat_size = int(round2_repeat_size + buffer)
         min_template_repeat_size = int(round2_repeat_size - buffer)
@@ -645,7 +625,7 @@ def split_allele_using_gmm_1d(repeat_region:RepeatRegion, ploidy, error_rate, ma
 
     return
 
-def extract_fastq_from_bam(in_bam_file, repeat_region:RepeatRegion, flank_dist, out_fastq_file):
+def extract_fastq_from_bam(input_args, in_bam_file, repeat_region:RepeatRegion, flank_dist, out_fastq_file):
     quality_shift = 33
     assert (flank_dist >= 0)
     chrom = repeat_region.chrom
@@ -653,7 +633,7 @@ def extract_fastq_from_bam(in_bam_file, repeat_region:RepeatRegion, flank_dist, 
     end_pos = repeat_region.end_pos + flank_dist
     if start_pos < 0: start_pos = 0
 
-    bam = pysam.AlignmentFile(in_bam_file, "rb")
+    bam = pysam.AlignmentFile(in_bam_file, "rb", reference_filename=input_args.ref_fasta)
     
     with open(out_fastq_file, 'w') as fastq:
         for read in bam.fetch(chrom, start_pos, end_pos):
@@ -735,7 +715,7 @@ def quantify1repeat_from_bam(process_name, num_threads_per_region, input_args, e
 
     # extract reads from bam file
     repeat_region.region_fq_file = os.path.join(temp_out_dir, f'{repeat_region.to_outfile_prefix()}.fastq')
-    extract_fastq_from_bam(in_bam_file, repeat_region, repeat_region.anchor_len, repeat_region.region_fq_file)
+    extract_fastq_from_bam(input_args, in_bam_file, repeat_region, repeat_region.anchor_len, repeat_region.region_fq_file)
     
     try:
         fastq_file_size = os.path.getsize(repeat_region.region_fq_file)
@@ -748,7 +728,6 @@ def quantify1repeat_from_bam(process_name, num_threads_per_region, input_args, e
 
     # extract ref sequence
     extract_ref_sequence(ref_fasta_dict, repeat_region)
-
     refine_repeat_region_in_ref(repeat_region, num_threads_per_region)
     if repeat_region.ref_has_issue == True and input_args.save_temp_files == False:
         return _clean_and_exit(input_args, repeat_region)
@@ -766,8 +745,7 @@ def quantify1repeat_from_bam(process_name, num_threads_per_region, input_args, e
 
     # Step 3: round 3 estimation
     tk.eprint(f'NOTICE: [{process_name}] Step 3: round 3 estimation')
-    round3_estimation(input_args.data_type, input_args.fast_mode, repeat_region, num_threads_per_region)
-
+    round3_estimation(input_args.data_type, input_args.fast_mode, repeat_region, num_threads_per_region)    
     output_repeat_size_1d(repeat_region)
 
     # Step 4: phasing reads using GMM
@@ -775,7 +753,6 @@ def quantify1repeat_from_bam(process_name, num_threads_per_region, input_args, e
     split_allele_using_gmm_1d(repeat_region, input_args.ploidy, error_rate, input_args.max_mutual_overlap, input_args.max_num_components, input_args.remove_noisy_reads)
     
     return _clean_and_exit(input_args, repeat_region)
-
 
 def nanoRepeat_bam (input_args, in_bam_file:string):
 
@@ -798,18 +775,11 @@ def nanoRepeat_bam (input_args, in_bam_file:string):
     tk.eprint(f'NOTICE: Reading reference fasta file: {input_args.ref_fasta}')
     ref_fasta_dict = tk.fasta_file2dict(input_args.ref_fasta)
     
-    total_cpu = input_args.num_cpu
-    total_tasks = len(repeat_region_list)
+    num_regions = len(repeat_region_list)
+    num_para_regions = min(num_regions, input_args.num_cpu)
+    num_threads_per_region = 1
     
-    if total_tasks >= total_cpu:
-        num_para_regions = min(32, total_cpu)
-    else:
-        num_para_regions = max(1, total_tasks)
-    
-    num_threads_per_region = int(total_cpu / num_para_regions)
-    if num_threads_per_region < 1: num_threads_per_region = 1
-    
-    tk.eprint(f'NOTICE: Parallel Strategy -> {num_para_regions} concurrent workers, {num_threads_per_region} threads per worker.')
+    tk.eprint(f'NOTICE: Parallel Strategy -> {num_para_regions} concurrent workers, {num_threads_per_region} thread per worker.')
     
     for i in range(0, len(repeat_region_list)):
         repeat_region_list[i].index = i
@@ -833,8 +803,7 @@ def nanoRepeat_bam (input_args, in_bam_file:string):
             processes=num_para_regions,
             initializer=init_worker_process,
             initargs=(ref_fasta_dict,)
-        ) as pool:
-            
+        ) as pool:            
             for result in pool.imap_unordered(process_single_region_wrapper, task_list):
                 quantified_repeat_region.append(result)
                 
@@ -844,7 +813,6 @@ def nanoRepeat_bam (input_args, in_bam_file:string):
     except Exception as e:
         tk.eprint(f"ERROR: An exception occurred during parallel processing: {e}")
         sys.exit(1)
-
 
     quantified_repeat_region.sort(key = lambda repeat_region:repeat_region.index)
 
