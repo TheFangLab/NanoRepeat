@@ -27,6 +27,7 @@ git clone https://github.com/TheFangLab/pyminimap2.git
 cd pyminimap2
 pip install .
 
+cd ../
 git clone https://github.com/TheFangLab/NanoRepeat.git
 cd NanoRepeat
 pip install .

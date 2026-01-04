@@ -37,6 +37,7 @@ import pyminimap2 as pymm2
 from typing import List
 import multiprocessing
 import glob
+import time
 
 from NanoRepeat import tk
 from NanoRepeat.repeat_region import *
@@ -677,28 +678,27 @@ def process_single_region_wrapper(args):
         repeat_region
     )
 
+def _clean_and_exit(input_args, repeat_region:RepeatRegion):
+    if input_args.save_temp_files == False:
+        if os.path.exists(repeat_region.temp_out_dir):
+            shutil.rmtree(repeat_region.temp_out_dir)
+
+    if repeat_region.no_details == True:
+        files_to_delete = glob.glob(f'{repeat_region.out_prefix}*')
+        for file_path in files_to_delete:
+            try:
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+            except Exception as e:
+                pass 
+    
+    repeat_region.get_final_output()
+    return repeat_region
+    
 def quantify1repeat_from_bam(process_name, num_threads_per_region, input_args, error_rate, in_bam_file, ref_fasta_dict, repeat_region):
     
-    tk.eprint(f'NOTICE: [{process_name}] Quantifying repeat: {repeat_region.to_outfile_prefix()}')
-    
-    def _clean_and_exit(input_args, repeat_region:RepeatRegion):
-
-        if input_args.save_temp_files == False:
-            if os.path.exists(repeat_region.temp_out_dir):
-                shutil.rmtree(repeat_region.temp_out_dir)
-
-        if repeat_region.no_details == True:
-            files_to_delete = glob.glob(f'{repeat_region.out_prefix}*')
-            for file_path in files_to_delete:
-                try:
-                    if os.path.isfile(file_path):
-                        os.remove(file_path)
-                except Exception as e:
-                    pass 
-        
-        repeat_region.get_final_output()
-        return repeat_region
-
+    start_time = time.time()
+    repeat_region_string = repeat_region.to_outfile_prefix()
     if repeat_region.chrom[0:3].lower() != 'chr':
         formatted_chr_name = 'chr' + repeat_region.chrom
     else:
@@ -725,32 +725,41 @@ def quantify1repeat_from_bam(process_name, num_threads_per_region, input_args, e
     if fastq_file_size == 0:
         tk.eprint(f'WARNING! No reads were found in repeat region: {repeat_region.to_outfile_prefix()}')
         return _clean_and_exit(input_args, repeat_region)
-
+    end_time = time.time()
+    tk.eprint(f'NOTICE: [{process_name}] [{repeat_region_string}] Step 1 (extracting reads) used: {end_time - start_time:.4f} seconds')
+    start_time = time.time()
     # extract ref sequence
     extract_ref_sequence(ref_fasta_dict, repeat_region)
     refine_repeat_region_in_ref(repeat_region, num_threads_per_region)
     if repeat_region.ref_has_issue == True and input_args.save_temp_files == False:
         return _clean_and_exit(input_args, repeat_region)
     
+    end_time = time.time()
+    tk.eprint(f'NOTICE: [{process_name}] [{repeat_region_string}] Step 2 (extracting ref sequence) used: {end_time - start_time:.4f} seconds')
+    start_time = time.time()
     # Step 1: finding anchor location in reads
-    tk.eprint(f'NOTICE: [{process_name}] Step 1: finding anchor location in reads')
     find_anchor_locations_in_reads(input_args.data_type, repeat_region, num_threads_per_region)
-    
-    # make core sequence fastq
     make_core_seq_fastq(repeat_region)
-
+    end_time = time.time()
+    tk.eprint(f'NOTICE: [{process_name}] [{repeat_region_string}] Step 3 (finding anchor location in reads) used: {end_time - start_time:.4f} seconds')
+    start_time = time.time()
     # Step 2: round 1 and round 2 estimation
-    tk.eprint(f'NOTICE: [{process_name}] Step 2: round 1 and round 2 estimation')
     round1_and_round2_estimation(input_args.data_type, repeat_region, num_threads_per_region)
 
+    end_time = time.time()
+    tk.eprint(f'NOTICE: [{process_name}] [{repeat_region_string}] Step 4 (round 1 and round 2 estimation) used: {end_time - start_time:.4f} seconds')
+    start_time = time.time()
     # Step 3: round 3 estimation
-    tk.eprint(f'NOTICE: [{process_name}] Step 3: round 3 estimation')
     round3_estimation(input_args.data_type, input_args.fast_mode, repeat_region, num_threads_per_region)    
+    end_time = time.time()
+    tk.eprint(f'NOTICE: [{process_name}] [{repeat_region_string}] Step 5 (round 3 estimation) used: {end_time - start_time:.4f} seconds')
+    
+    start_time = time.time()
     output_repeat_size_1d(repeat_region)
-
     # Step 4: phasing reads using GMM
-    tk.eprint(f'NOTICE: [{process_name}] Step 4: phasing reads using GMM')
     split_allele_using_gmm_1d(repeat_region, input_args.ploidy, error_rate, input_args.max_mutual_overlap, input_args.max_num_components, input_args.remove_noisy_reads)
+    end_time = time.time()
+    tk.eprint(f'NOTICE: [{process_name}] [{repeat_region_string}] Step 6 (phasing reads using GMM) used: {end_time - start_time:.4f} seconds')
     
     return _clean_and_exit(input_args, repeat_region)
 
