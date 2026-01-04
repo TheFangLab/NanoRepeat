@@ -22,12 +22,6 @@ You can use the following commands to install NanoRepeat (we recommend creating 
 conda create -n nanorepeat python=3.9
 conda activate nanorepeat
 
-# install pyminimap2 first
-git clone https://github.com/TheFangLab/pyminimap2.git
-cd pyminimap2
-pip install .
-
-cd ../
 git clone https://github.com/TheFangLab/NanoRepeat.git
 cd NanoRepeat
 pip install .
