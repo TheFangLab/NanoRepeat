@@ -12,14 +12,14 @@
 
 ## Installation
 
-Prerequisites: [Python](https://www.python.org/downloads/) (version >= 3.8)
+Prerequisites: [Python](https://www.python.org/downloads/) (version >= 3.9)
 
 **Please note that this is a forked version with a different installation method from the original repository.** 
 
 You can use the following commands to install NanoRepeat (we recommend creating an new conda environment to avoid dependency issues):
 
 ```
-conda create -n nanorepeat python=3.8
+conda create -n nanorepeat python=3.9
 conda activate nanorepeat
 
 # install pyminimap2 first
