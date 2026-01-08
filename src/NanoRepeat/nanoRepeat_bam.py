@@ -518,9 +518,9 @@ def round3_align (fast_mode, repeat_region:RepeatRegion, data_type:string):
         if round2_repeat_size == None: continue
         read_id += 1
         
-        buffer = max(10, int(round2_repeat_size * 0.05))
-        if buffer > 20: buffer = 20
-        if fast_mode: buffer = 5
+        buffer = max(20, int(round2_repeat_size * 0.10))
+        if buffer > 150: buffer = 150
+        if fast_mode: buffer = 20
         
         max_template_repeat_size = int(round2_repeat_size + buffer)
         min_template_repeat_size = int(round2_repeat_size - buffer)
@@ -547,6 +547,7 @@ def round3_align (fast_mode, repeat_region:RepeatRegion, data_type:string):
         read_fasta_f.write(read_seq + '\n')
         read_fasta_f.close()
 
+        
         read.round3_align_results = seq_align.fasta_sw_align(read_fasta_file, template_fasta_file)
 
     return
